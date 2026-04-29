@@ -1,0 +1,188 @@
+//@version=6
+indicator("📌 Pin Bar Reversal", shorttitle="PBR", overlay=true,
+          max_lines_count=50, max_labels_count=100, max_boxes_count=10)
+
+// ═══════════════════════════════════════════════════════════
+// ⚙️  INPUTS
+// ═══════════════════════════════════════════════════════════
+wickRatio   = input.float(1.8,  "Wick/Body Ratio",       minval=0.5,  maxval=5.0,  step=0.1,  group="Pin Bar Geometry")
+bodyPct     = input.float(0.45, "Body Zone (max %)",      minval=0.1,  maxval=0.9,  step=0.05, group="Pin Bar Geometry")
+cooldown    = input.int(5,      "Cooldown Bars",          minval=1,    maxval=50,              group="Pin Bar Geometry",
+              tooltip="Minimum bars between signals — prevents stacking")
+swingStr    = input.int(3,      "Swing Strength",         minval=1,    maxval=50,              group="Support and Resistance")
+srLookback  = input.int(100,    "S/R Lookback Bars",      minval=3,    maxval=500,             group="Support and Resistance")
+srProximity = input.float(1.50, "Proximity x ATR",        minval=0.05, maxval=5.0,  step=0.05, group="Support and Resistance")
+atrLen      = input.int(14,     "ATR Period",             minval=3,    maxval=50,              group="Support and Resistance")
+bullCol     = input.color(#089981, "CALL Color",                                               group="Display")
+bearCol     = input.color(#f23645, "PUT Color",                                                group="Display")
+showLines   = input.bool(true,  "Show S/R Lines",                                              group="Display")
+showWatch   = input.bool(true,  "Show Live Signal Watch",                                      group="Display")
+useTrend    = input.bool(false, "EMA Trend Filter",                                            group="Display",
+              tooltip="CALL only above EMA, PUT only below EMA")
+emaLen      = input.int(50,     "EMA Length",             minval=5,    maxval=500,              group="Display")
+useRSI      = input.bool(false, "RSI Filter",                                                  group="Display",
+              tooltip="CALL only when RSI oversold, PUT only when overbought")
+rsiLen      = input.int(14,     "RSI Length",             minval=2,    maxval=50,              group="Display")
+rsiOS       = input.int(45,     "RSI Oversold  (CALL <)", minval=10,   maxval=60,              group="Display")
+rsiOB       = input.int(55,     "RSI Overbought (PUT >)", minval=40,   maxval=90,              group="Display")
+
+// ═══════════════════════════════════════════════════════════
+// 📐  GEOMETRY
+// ═══════════════════════════════════════════════════════════
+atr     = ta.atr(atrLen)
+ema     = ta.ema(close, emaLen)
+rsi     = ta.rsi(close, rsiLen)
+eps     = 1e-10
+body    = math.max(math.abs(close - open), eps)
+upWick  = high - math.max(close, open)
+loWick  = math.min(close, open) - low
+cRange  = math.max(high - low, eps)
+bodyTop = math.max(close, open)
+bodyBot = math.min(close, open)
+prox    = srProximity * atr
+
+aboveEma  = close > ema
+belowEma  = close < ema
+rsiOkBull = not useRSI or rsi < rsiOS
+rsiOkBear = not useRSI or rsi > rsiOB
+
+bullPin = loWick >= wickRatio * body and (bodyBot - low) / cRange <= bodyPct
+bearPin = upWick >= wickRatio * body and (high - bodyTop) / cRange <= bodyPct
+
+plot(useTrend ? ema : na, "EMA", color=color.new(#d4af37, 30), linewidth=2)
+
+// ═══════════════════════════════════════════════════════════
+// 📍  SWING LEVEL ARRAYS
+// ═══════════════════════════════════════════════════════════
+rawPH = ta.pivothigh(swingStr, swingStr)
+rawPL = ta.pivotlow(swingStr, swingStr)
+
+var array<float> resP = array.new_float()
+var array<int>   resB = array.new_int()
+var array<float> supP = array.new_float()
+var array<int>   supB = array.new_int()
+
+if not na(rawPH)
+    array.push(resP, rawPH)
+    array.push(resB, bar_index - swingStr)
+    if array.size(resP) > 60
+        array.shift(resP)
+        array.shift(resB)
+
+if not na(rawPL)
+    array.push(supP, rawPL)
+    array.push(supB, bar_index - swingStr)
+    if array.size(supP) > 60
+        array.shift(supP)
+        array.shift(supB)
+
+findNearest(lvlArr, barArr, tipPrice, p) =>
+    result   = float(na)
+    bestDist = 999999.0
+    sz = array.size(lvlArr)
+    if sz > 0
+        for k = 0 to sz - 1
+            pvP     = array.get(lvlArr, k)
+            pvB     = array.get(barArr, k)
+            barsAgo = bar_index - pvB
+            dist    = math.abs(tipPrice - pvP)
+            if barsAgo > 0 and barsAgo <= srLookback and dist <= p and dist < bestDist
+                bestDist := dist
+                result   := pvP
+    result
+
+nearestSup = findNearest(supP, supB, low,  prox)
+nearestRes = findNearest(resP, resB, high, prox)
+
+// ═══════════════════════════════════════════════════════════
+// 🚦  SIGNALS
+// ═══════════════════════════════════════════════════════════
+trendOkBull = not useTrend or aboveEma
+trendOkBear = not useTrend or belowEma
+
+var int lastSigBar = -999
+cooledDown = (bar_index - lastSigBar) >= cooldown
+
+callSig = bullPin and not na(nearestSup) and trendOkBull and rsiOkBull and cooledDown
+putSig  = bearPin and not na(nearestRes) and trendOkBear and rsiOkBear and cooledDown
+
+if callSig or putSig
+    lastSigBar := bar_index
+
+// ═══════════════════════════════════════════════════════════
+// 🔔  ARROWS + BAR GLOW
+// ═══════════════════════════════════════════════════════════
+plotshape(callSig, "CALL", shape.arrowup,  location.belowbar, bullCol, size=size.large, text="CALL", textcolor=bullCol)
+plotshape(putSig,  "PUT",  shape.arrowdown, location.abovebar, bearCol, size=size.large, text="PUT",  textcolor=bearCol)
+
+bgcolor(callSig ? color.new(bullCol, 82) : na, title="CALL Glow")
+bgcolor(putSig  ? color.new(bearCol, 82) : na, title="PUT Glow")
+
+// ═══════════════════════════════════════════════════════════
+// 📍  S/R LINES  (max 5 each side)
+// ═══════════════════════════════════════════════════════════
+var array<line> rLns = array.new_line()
+var array<line> sLns = array.new_line()
+
+if showLines and barstate.isconfirmed
+    if not na(rawPH)
+        ln = line.new(bar_index - swingStr, rawPH, bar_index, rawPH,
+                      color=color.new(bearCol, 50), width=1, style=line.style_dashed, extend=extend.right)
+        array.push(rLns, ln)
+        if array.size(rLns) > 5
+            line.delete(array.shift(rLns))
+    if not na(rawPL)
+        ln = line.new(bar_index - swingStr, rawPL, bar_index, rawPL,
+                      color=color.new(bullCol, 50), width=1, style=line.style_dashed, extend=extend.right)
+        array.push(sLns, ln)
+        if array.size(sLns) > 5
+            line.delete(array.shift(sLns))
+
+// ═══════════════════════════════════════════════════════════
+// 👁️  LIVE SIGNAL WATCH
+// ═══════════════════════════════════════════════════════════
+var label watchLbl = na
+
+if showWatch and barstate.islast
+    label.delete(watchLbl)
+    lb    = math.max(math.abs(close - open), eps)
+    lu    = high - math.max(close, open)
+    ll    = math.min(close, open) - low
+    lr    = math.max(high - low, eps)
+    lbt   = math.max(close, open)
+    lbb   = math.min(close, open)
+    lBull = ll >= wickRatio * lb and (lbb - low) / lr <= bodyPct
+    lBear = lu >= wickRatio * lb and (high - lbt) / lr <= bodyPct
+    lSup  = findNearest(supP, supB, low,  prox)
+    lRes  = findNearest(resP, resB, high, prox)
+    lCall = lBull and not na(lSup)
+    lPut  = lBear and not na(lRes)
+    var int pct = 0
+    var string txt = ""
+    pct := 0
+    txt := ""
+    if lBull
+        pct := math.min(math.round(ll / (wickRatio * lb) * 100), 100)
+    else if lBear
+        pct := math.min(math.round(lu / (wickRatio * lb) * 100), 100)
+    if lCall
+        txt := "CALL FORMING " + str.tostring(pct) + "%  |  Pin + Support"
+    else if lPut
+        txt := "PUT FORMING " + str.tostring(pct) + "%  |  Pin + Resistance"
+    else if lBull
+        txt := "Bull Pin forming (no S/R nearby)"
+    else if lBear
+        txt := "Bear Pin forming (no S/R nearby)"
+    if txt != ""
+        col  = lCall ? bullCol : lPut ? bearCol : color.gray
+        yPos = lCall or lBull ? low - atr * 0.6 : high + atr * 0.6
+        stl  = lCall or lBull ? label.style_label_up : label.style_label_down
+        watchLbl := label.new(bar_index, yPos, txt,
+                              style=stl, color=color.new(col, 15), textcolor=color.white, size=size.normal)
+
+// ═══════════════════════════════════════════════════════════
+// 🔔  ALERTS
+// ═══════════════════════════════════════════════════════════
+alertcondition(callSig, "CALL Signal", "Pin Bar CALL - enter on next candle open")
+alertcondition(putSig,  "PUT Signal",  "Pin Bar PUT - enter on next candle open")
+alertcondition(callSig or putSig, "Any Signal", "Pin Bar signal fired")
