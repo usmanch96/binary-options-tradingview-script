@@ -5,13 +5,13 @@ indicator("📌 Pin Bar Reversal", shorttitle="PBR", overlay=true,
 // ═══════════════════════════════════════════════════════════
 // ⚙️  INPUTS
 // ═══════════════════════════════════════════════════════════
-wickRatio   = input.float(1.8,  "Wick/Body Ratio",       minval=0.5,  maxval=5.0,  step=0.1,  group="Pin Bar Geometry")
-bodyPct     = input.float(0.45, "Body Zone (max %)",      minval=0.1,  maxval=0.9,  step=0.05, group="Pin Bar Geometry")
-cooldown    = input.int(5,      "Cooldown Bars",          minval=1,    maxval=50,              group="Pin Bar Geometry",
+wickRatio   = input.float(1.5,  "Wick/Body Ratio",       minval=0.5,  maxval=5.0,  step=0.1,  group="Pin Bar Geometry")
+bodyPct     = input.float(0.50, "Body Zone (max %)",      minval=0.1,  maxval=0.9,  step=0.05, group="Pin Bar Geometry")
+cooldown    = input.int(3,      "Cooldown Bars",          minval=1,    maxval=50,              group="Pin Bar Geometry",
               tooltip="Minimum bars between signals — prevents stacking")
-swingStr    = input.int(3,      "Swing Strength",         minval=1,    maxval=50,              group="Support and Resistance")
+swingStr    = input.int(2,      "Swing Strength",         minval=1,    maxval=50,              group="Support and Resistance")
 srLookback  = input.int(100,    "S/R Lookback Bars",      minval=3,    maxval=500,             group="Support and Resistance")
-srProximity = input.float(1.50, "Proximity x ATR",        minval=0.05, maxval=5.0,  step=0.05, group="Support and Resistance")
+srProximity = input.float(2.00, "Proximity x ATR",        minval=0.05, maxval=5.0,  step=0.05, group="Support and Resistance")
 atrLen      = input.int(14,     "ATR Period",             minval=3,    maxval=50,              group="Support and Resistance")
 bullCol     = input.color(#089981, "CALL Color",                                               group="Display")
 bearCol     = input.color(#f23645, "PUT Color",                                                group="Display")
@@ -46,8 +46,8 @@ belowEma  = close < ema
 rsiOkBull = not useRSI or rsi < rsiOS
 rsiOkBear = not useRSI or rsi > rsiOB
 
-bullPin = loWick >= wickRatio * body and (bodyBot - low) / cRange <= bodyPct
-bearPin = upWick >= wickRatio * body and (high - bodyTop) / cRange <= bodyPct
+bullPin = loWick >= wickRatio * body and (bodyBot - low) / cRange <= bodyPct and loWick > upWick
+bearPin = upWick >= wickRatio * body and (high - bodyTop) / cRange <= bodyPct and upWick > loWick
 
 plot(useTrend ? ema : na, "EMA", color=color.new(#d4af37, 30), linewidth=2)
 
